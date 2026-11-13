@@ -1,0 +1,48 @@
+name: Publish single recipes
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: recipe-publisher
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+      - name: Process all pending recipes and safely commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git reset --hard origin/main
+            python3 scripts/process_incoming.py
+            git add -- ./*.html recipe-registry.json publish-status.json
+            if git diff --cached --quiet; then break; fi
+            git commit -m 'Add new Crouton recipes and refresh index'
+            if git push origin HEAD:main; then break; fi
+            if [ "$attempt" = 3 ]; then echo 'Concurrent update: rerun safely'; exit 1; fi
+            sleep "$attempt"
+          done
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
